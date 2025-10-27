@@ -425,7 +425,14 @@ static char sNewDir[ kDirBufSize ];
 bool App::Initialize() {
 
     ::GetCurrentDirectory( kDirBufSize, sOldDir );
-    ::SetCurrentDirectory( "D:/Program Files (x86)/Github Repos/DXE2" );
+    std::string dir = sOldDir;
+    std::string dxe = "DXE";
+    if( int i = dir.rfind( dxe ); i != std::string::npos )
+    {
+      dir = dir.substr( 0, i + dxe.size() );
+      ::SetCurrentDirectory( dir.c_str() );
+      
+    }
     ::GetCurrentDirectory( kDirBufSize, sNewDir );
 
     if (!Core::Initialize()) {
