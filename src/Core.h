@@ -131,7 +131,7 @@ protected:
 	UINT mCbvSrvUavDescriptorSize = 0;
 
 	// Derived class parameters
-	std::string mMainWndCaption = "Press TAB to toggle free camera and gui contro";
+	std::string mMainWndCaption = "DXE Voxel Cone Tracing";
 	D3D_DRIVER_TYPE md3dDriverType  = D3D_DRIVER_TYPE_HARDWARE;
 	DXGI_FORMAT mBackBufferFormat   = DXGI_FORMAT_R8G8B8A8_UNORM;
 	DXGI_FORMAT mDepthStencilFormat_OnResize = DXGI_FORMAT_R24G8_TYPELESS; // ???
