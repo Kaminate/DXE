@@ -1,0 +1,160 @@
+#ifndef APP_H
+#define APP_H
+
+
+
+#include "Core.h"
+#include "Utilities/DescriptorHeap.h"
+#include "Utilities/MathUtils.h"
+#include "Utilities/Utils.h"
+#include "Utilities/Keyboard.h"
+#include "Frames/FrameResource.h"
+#include "Assets/Geometry.h"
+#include "Assets/Texture.h"
+#include "Assets/Scene.h"
+#include "Features/ShadowMap.h"
+#include "Features/DeferredRenderer.h"
+#include "Features/MeshVoxelizer.h"
+
+using Microsoft::WRL::ComPtr;
+using namespace DirectX;
+using namespace DirectX::PackedVector;
+
+
+class App : public Core {
+public:
+    App(HINSTANCE hInstance);
+    App(const App& rhs) = delete;
+    App& operator=(const App& rhs) = delete;
+    ~App();
+
+    virtual bool Initialize()override;
+
+private:
+
+    virtual void CreateRtvAndDsvDescriptorHeaps();
+    virtual void OnResize()override;
+    virtual void Update(const Timer& gt)override;
+    virtual void Draw(const Timer& gt)override;
+    virtual void OnDestroy()override;
+
+    // input callbacks 
+    virtual void OnMouseDown(WPARAM btnState, int x, int y)override;
+    virtual void OnMouseUp(WPARAM btnState, int x, int y)override;
+    virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
+    // key board input
+    virtual void OnKeyDown(WPARAM btnState)override;
+    virtual void OnKeyUp(WPARAM btnState)override;
+
+    // per frame updates
+    void UpdateGui(const Timer& gt);
+    void OnKeyboardInput(const Timer& gt);
+    void UpdateCamera(const Timer& gt);
+    void UpdateObjectCBs(const Timer& gt);
+    void UpdateMainPassCB(const Timer& gt);
+    void UpdateMaterialCBs(const Timer& gt);
+    void UpdateShadowPassCB(const Timer& gt);
+    void UpdateRadiancePassCB(const Timer& gt);
+    void UpdateCBs(const Timer& gt);
+    void UpdateScenePhysics(const Timer& gt);
+
+    // misc initializations
+    bool InitImgui();
+    void BuildDescriptorHeaps();
+    void BuildRootSignature();
+    void BuildShadersAndInputLayout();
+    void BuildPSOs();
+    void CreatePSO(
+        ID3D12PipelineState** pso,
+        ID3D12RootSignature* rootSignature,
+        D3D12_PRIMITIVE_TOPOLOGY_TYPE primitiveTopoType,
+        D3D12_BLEND_DESC blendDesc,
+        D3D12_RASTERIZER_DESC rasterDesc,
+        D3D12_DEPTH_STENCIL_DESC dsState,
+        UINT numRenderTargets,
+        DXGI_FORMAT renderTargetFormat,
+        DXGI_FORMAT depthStencilFormat,
+        ID3DBlob* vertexShader,
+        ID3DBlob* pixelShader,
+        ID3DBlob* geometryShader = nullptr
+        );
+
+    void BuildFrameResources();
+    void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<ObjectInfo*>& objInfos);
+
+
+    //render passes draw command
+    void DrawScene2ShadowMap();
+    void DrawScene2GBuffers();
+    void VoxelizeMesh(RenderLayer _layer);
+    void InjectRadiance();
+    void FillMip();
+    void FillMipLevel(int level);
+    void DrawScene();
+
+
+    std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
+
+private:
+
+    std::vector<std::unique_ptr<FrameResource>> mFrameResources;
+    FrameResource* mCurrFrameResource = nullptr;
+    int mCurrFrameResourceIndex = 0;
+
+    std::unique_ptr<Scene> mScene;   
+    std::unique_ptr<ShadowMap> mShadowMap;
+    std::unique_ptr<DeferredRenderer> mDeferredRenderer;
+    std::unique_ptr<MeshVoxelizer> mMeshVoxelizer;
+
+    std::unordered_map<std::string, ComPtr<ID3DBlob>> mShaders; 
+    std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> mPSOs;
+    std::unordered_map<std::string, ComPtr<ID3D12RootSignature>> mRootSignatures;
+    std::unordered_map<std::string, std::unique_ptr<mDescriptorHeap>> mSrvHeaps;
+
+    std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
+
+    // Render items divided by PSO.
+
+
+    UINT NumRTVs{};
+    UINT NumDSVs{};
+    UINT NumSRVs{};
+
+
+    //common camera
+    XMFLOAT3 mEyePos = { 0.0f, 0.0f, 0.0f };
+    XMFLOAT4X4 mView = MathUtils::Identity4x4();
+    XMFLOAT4X4 mProj = MathUtils::Identity4x4();
+    float mTheta = 1.5f * XM_PI;
+    float mPhi = 0.2f * XM_PI;
+    float mRadius = 85.0f;
+
+
+    POINT mLastMousePos{};
+
+    //imgui parameters
+    ComPtr<ID3D12DescriptorHeap> m_cbvSrvHeap4Imgui;
+    bool show_demo_window = true;
+    bool show_another_window = false;
+    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+
+    // states/ flags
+    bool isFreeCamEnabled = true;
+    bool mouse = true;
+    int mShowVoxel = 1;
+    int mShowDirect = 0;
+    bool voxelized = false;
+
+    struct ImguiParameters {
+        std::vector<float> LightPos;
+        std::vector<float> l2pos = { 20,10,10 };
+        std::vector<float> groundpos = { 0,-90,0 };
+        std::vector<float> ground1pos = { 0,-100,50 };
+    }mImguiPara;
+
+
+};
+
+
+#endif // !APP_H
