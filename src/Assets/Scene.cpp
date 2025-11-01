@@ -189,7 +189,7 @@ void Scene::loadModels() {
 
 void Scene::loadAssetFromAssimp(const std::string filepath) {
 
-    name = filepath.substr(filepath.find_last_of("\//") + 1 );
+    name = filepath.substr(filepath.find_last_of("\\/") + 1 );
     auto assimpModel = std::make_unique<Model>(ModelType::ASSIMP_MODEL);
 
     DirectX::XMFLOAT4X4 worldMat = MathUtils::Identity4x4();// 

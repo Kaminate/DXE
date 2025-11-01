@@ -4,6 +4,26 @@
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx12.h"
 
+#if PIX_AVAILABLE
+#include <WinPixEventRuntime/pix3.h>
+struct PixEventBlock
+{
+  PixEventBlock(ID3D12GraphicsCommandList* cmdList, const char* str ) : mCommandList( cmdList )
+  {
+    PIXBeginEvent( mCommandList, PIX_COLOR_DEFAULT, str );
+  }
+
+  ~PixEventBlock()
+  {
+    PIXEndEvent( mCommandList );
+  }
+  ID3D12GraphicsCommandList* mCommandList;
+};
+#define PIX_EVENT_BLOCK(str) PixEventBlock block##__COUNTER__( mCommandList.Get(), str )
+#else
+#define PIX_EVENT_BLOCK(str)
+#endif
+
 struct ExampleDescriptorHeapAllocator
 {
   ID3D12DescriptorHeap* Heap = nullptr;
@@ -405,6 +425,7 @@ void App::UpdateGui(const Timer& gt) {
         ImGui::Text( "F - show direct lighting" );
         ImGui::Text( "Q - show voxel color" );
         ImGui::Text( "R - show voxel normal" );
+        ImGui::Text( "F2 - Toggle msaa (current status: %s)", m4xMsaaState ? "enabled" : "disabled" );
         
         ImGui::End();
     }
@@ -424,16 +445,19 @@ static char sOldDir[ kDirBufSize ];
 static char sNewDir[ kDirBufSize ];
 bool App::Initialize() {
 
-    ::GetCurrentDirectory( kDirBufSize, sOldDir );
-    std::string dir = sOldDir;
-    std::string dxe = "DXE";
-    if( int i = dir.rfind( dxe ); i != std::string::npos )
+    // hack to set working directory
     {
-      dir = dir.substr( 0, i + dxe.size() );
-      ::SetCurrentDirectory( dir.c_str() );
-      
+      ::GetCurrentDirectory( kDirBufSize, sOldDir );
+      std::string dir = sOldDir;
+      std::string dxe = "DXE";
+      if( int i = dir.rfind( dxe ); i != std::string::npos )
+      {
+        dir = dir.substr( 0, i + dxe.size() );
+        ::SetCurrentDirectory( dir.c_str() );
+
+      }
+      ::GetCurrentDirectory( kDirBufSize, sNewDir );
     }
-    ::GetCurrentDirectory( kDirBufSize, sNewDir );
 
     if (!Core::Initialize()) {
         return false;
@@ -735,55 +759,68 @@ void App::OnResize() {
 
 
 
+void App::RecordDrawCommands()
+{
 
-void App::Draw(const Timer& gt) {
+  PIX_EVENT_BLOCK( "RecordDrawCommands()" );
+
+  // only need to set SRV CBV UAV here, since RTV and DSV will never be accessed inside a shader (only written to)
+  ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvHeaps[ "MainPass" ]->mPtr() };
+  mCommandList->SetDescriptorHeaps( _countof( descriptorHeaps ), descriptorHeaps );
 
 
+  DrawScene2GBuffers();
+  DrawScene2ShadowMap();
+
+  {
+    PIX_EVENT_BLOCK( "mMeshVoxelizer->Clear3DTexture()" );
+    mMeshVoxelizer->Clear3DTexture( mCommandList.Get(), mRootSignatures[ "CompResetPass" ].Get(), mPSOs[ "CompReset" ].Get() );
+  }
+
+  if( !voxelized )
+  {
+    VoxelizeMesh( RenderLayer::Default );
+    voxelized = true;
+  }
+
+  VoxelizeMesh( RenderLayer::Dynamic );
+
+  InjectRadiance();
+
+  FillMip();
+
+  DrawScene();
+
+  {
+    PIX_EVENT_BLOCK( "Record ImGui Commands" );
+    auto transition1 = CD3DX12_RESOURCE_BARRIER::Transition( CurrentBackBuffer(),
+                                                             D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET );
+    mCommandList->ResourceBarrier( 1, &transition1 );
+    ID3D12DescriptorHeap* ppHeaps[] = { m_cbvSrvHeap4Imgui.Get() };
+    mCommandList->SetDescriptorHeaps( _countof( ppHeaps ), ppHeaps );
+    ImGui::Render();
+    ImGui_ImplDX12_RenderDrawData( ImGui::GetDrawData(), mCommandList.Get() );
+    auto transition2 = CD3DX12_RESOURCE_BARRIER::Transition( CurrentBackBuffer(),
+                                                             D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT );
+    mCommandList->ResourceBarrier( 1, &transition2 );
+  }
+
+}
+
+void App::Draw( const Timer& gt )
+{
     auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
 
     // Reuse the memory associated with command recording.
     // We can only reset when the associated command lists have finished execution on the GPU.
-    ThrowIfFailed(cmdListAlloc->Reset());
+    ThrowIfFailed( cmdListAlloc->Reset() );
 
     // A command list can be reset after it has been added to the command queue via ExecuteCommandList.
     // Reusing the command list reuses memory.
 
-    ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
+    ThrowIfFailed( mCommandList->Reset( cmdListAlloc.Get(), mPSOs[ "opaque" ].Get() ) );
 
-    // only need to set SRV CBV UAV here, since RTV and DSV will never be accessed inside a shader (only written to)
-    ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvHeaps["MainPass"]->mPtr() };
-    mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
- 
-
-    DrawScene2GBuffers();
-    DrawScene2ShadowMap();
-    mMeshVoxelizer->Clear3DTexture(mCommandList.Get(), mRootSignatures["CompResetPass"].Get(), mPSOs["CompReset"].Get());
-    if (!voxelized) { // full scene voxlization
-        VoxelizeMesh(RenderLayer::Default);
-        voxelized = true;
-    }
-    //dynamic geometry revoxlization
-    VoxelizeMesh(RenderLayer::Dynamic);
-    InjectRadiance();
-    FillMip();
-
-    //mCommandList->RSSetShadingRate(D3D12_SHADING_RATE_4X4, nullptr);
-
-    DrawScene();
-    //mCommandList->RSSetShadingRate(D3D12_SHADING_RATE_1X1, nullptr);
-    // record cmdlist for imgui before we close cmdlist
-    {
-        auto transition1 = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-            D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        mCommandList->ResourceBarrier(1, &transition1);
-        ID3D12DescriptorHeap* ppHeaps[] = { m_cbvSrvHeap4Imgui.Get() };
-        mCommandList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
-        ImGui::Render();
-        ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
-        auto transition2 = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-        mCommandList->ResourceBarrier( 1, &transition2 );
-    }
+    RecordDrawCommands();
 
     // Done recording commands.
     ThrowIfFailed(mCommandList->Close());
@@ -1219,6 +1256,7 @@ void App::BuildFrameResources() {
 }
 
 void App::DrawScene() {
+    PIX_EVENT_BLOCK( "DrawScene()" );
     mCommandList->RSSetViewports(1, &mScreenViewport);
     mCommandList->RSSetScissorRects(1, &mScissorRect);
 
@@ -1249,9 +1287,9 @@ void App::DrawScene() {
     auto passCB = mCurrFrameResource->PassCB->Resource();
     mCommandList->SetGraphicsRootConstantBufferView(d3dUtil::MAIN_PASS_UNIFORM::MAINPASS_CBV, passCB->GetGPUVirtualAddress());
     mCommandList->SetPipelineState(mPSOs["deferredPost"].Get());
-    DrawRenderItems(mCommandList.Get(), mScene->getObjectInfoLayer()[(int)RenderLayer::Gbuffer]);
+    DrawRenderItems(mCommandList.Get(), RenderLayer::Gbuffer);
     mCommandList->SetPipelineState(mPSOs["debug"].Get());
-    DrawRenderItems(mCommandList.Get(), mScene->getObjectInfoLayer()[(int)RenderLayer::Debug]);
+    DrawRenderItems(mCommandList.Get(), RenderLayer::Debug);
     // Indicate a state transition on the resource usage.
 
     //mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::RADIANCE)->getResourcePtr(),
@@ -1271,49 +1309,48 @@ void App::DrawScene() {
 
 void App::InjectRadiance() {
 
+    PIX_EVENT_BLOCK( "InjectRadiance()" );
+    auto radianceCB = mCurrFrameResource->RadianceCB->Resource();
+    auto barrier = CD3DX12_RESOURCE_BARRIER::UAV( mMeshVoxelizer->getVolumeTexture( VOLUME_TEXTURE_TYPE::RADIANCE )->getResourcePtr() );
     mCommandList->SetPipelineState(mPSOs["CompRadiance"].Get());
     mCommandList->SetComputeRootSignature(mRootSignatures["CompRadiance"].Get());
     mCommandList->SetComputeRootDescriptorTable(0, mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::ALBEDO)->getGPUHandle4UAV());
     mCommandList->SetComputeRootDescriptorTable(1, mShadowMap->getGPUHandle4SRV());
-    auto radianceCB = mCurrFrameResource->RadianceCB->Resource();
     mCommandList->SetComputeRootConstantBufferView(2, radianceCB->GetGPUVirtualAddress());
     mCommandList->Dispatch(mShadowMap->Width() / 16.0, mShadowMap->Height() / 16.0, 1.0);
-
-    auto barrier = CD3DX12_RESOURCE_BARRIER::UAV( mMeshVoxelizer->getVolumeTexture( VOLUME_TEXTURE_TYPE::RADIANCE )->getResourcePtr() );
     mCommandList->ResourceBarrier((int)1, &barrier);
 }
 
 void App::FillMip() {
-
-
+    PIX_EVENT_BLOCK( "FillMip()" );
     UINT mipPow = 2;
-
-
-
     int dispatchX = mMeshVoxelizer->getDimensionX()  / 8 ;
     int dispatchY = mMeshVoxelizer->getDimensionY()  / 8 ;
     int dispatchZ = mMeshVoxelizer->getDimensionZ()  / 8 ;
-
+    auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getResourcePtr());
     mCommandList->SetPipelineState(mPSOs["CompFillBaseMip"].Get());
     mCommandList->SetComputeRootSignature(mRootSignatures["CompFillBaseMip"].Get());
     mCommandList->SetComputeRootDescriptorTable(0, mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::RADIANCE)->getGPUHandle4UAV());
     mCommandList->SetComputeRootDescriptorTable(1, mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getGPUHandle4UAV(0));
     mCommandList->SetComputeRoot32BitConstant(2, mMeshVoxelizer->getDimensionX() , 0);
     mCommandList->Dispatch(dispatchX, dispatchY, dispatchZ);
-
-    auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getResourcePtr());
     mCommandList->ResourceBarrier((int)1, &barrier);
-
     for (int i = 1; i < mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getNumMipLevels(); ++i) {
         FillMipLevel(i);
     }
-
-
 }
 
 void App::FillMipLevel(int level) {
     if (level == 0 || level >= mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getNumMipLevels())
         return;
+
+    std::string s = "FillMipLevel(";
+    s += std::to_string( level );
+    s += ")";
+
+    PIX_EVENT_BLOCK( s.c_str() );
+
+
     UINT mipPow = (UINT)(pow(2, level));
     int dispatchX = (mMeshVoxelizer->getDimensionX() / (mipPow ) + 8 - 1)/ 8;
     int dispatchY = (mMeshVoxelizer->getDimensionY() / (mipPow ) + 8 - 1)/ 8;
@@ -1331,63 +1368,80 @@ void App::FillMipLevel(int level) {
 
 void App::VoxelizeMesh(RenderLayer _layer) {
 
-    //mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mMeshVoxelizer->getResourcePtr(),
-    //    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ));
+    std::string str = "VoxelizeMesh(";
+    if( _layer == RenderLayer::Default ) str += "Default";
+    else if( _layer == RenderLayer::Dynamic ) str += "Dynamic";
+    else str += "?";
+    str += ")";
 
-    mCommandList->SetGraphicsRootSignature(mRootSignatures["VoxelizerPass"].Get());
+    PIX_EVENT_BLOCK(str.c_str());
 
-    mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::VOXEL, mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::ALBEDO)->getGPUHandle4UAV());
-    mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::RADIANCEMIP, mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getGPUHandle4UAV(0));
+    {
+      PIX_EVENT_BLOCK( "Setup state" );
+      auto passCB = mCurrFrameResource->PassCB->Resource();
+      mCommandList->SetGraphicsRootSignature( mRootSignatures[ "VoxelizerPass" ].Get() );
+      mCommandList->SetGraphicsRootDescriptorTable( d3dUtil::MAIN_PASS_UNIFORM::VOXEL, mMeshVoxelizer->getVolumeTexture( VOLUME_TEXTURE_TYPE::ALBEDO )->getGPUHandle4UAV() );
+      mCommandList->SetGraphicsRootDescriptorTable( d3dUtil::MAIN_PASS_UNIFORM::RADIANCEMIP, mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getGPUHandle4UAV( 0 ) );
+      mCommandList->RSSetViewports( 1, &mMeshVoxelizer->Viewport() );
+      mCommandList->RSSetScissorRects( 1, &mMeshVoxelizer->ScissorRect() );
+      mCommandList->OMSetRenderTargets( 0, nullptr, false, nullptr );
+      mCommandList->SetGraphicsRootConstantBufferView( d3dUtil::MAIN_PASS_UNIFORM::MAINPASS_CBV, passCB->GetGPUVirtualAddress() );
+      mCommandList->SetPipelineState( mPSOs[ "voxelizer" ].Get() );
+    }
 
-    mCommandList->RSSetViewports(1, &mMeshVoxelizer->Viewport());
-    mCommandList->RSSetScissorRects(1, &mMeshVoxelizer->ScissorRect());
-    mCommandList->OMSetRenderTargets(0, nullptr, false, nullptr);
-    auto passCB = mCurrFrameResource->PassCB->Resource();
-    mCommandList->SetGraphicsRootConstantBufferView(d3dUtil::MAIN_PASS_UNIFORM::MAINPASS_CBV, passCB->GetGPUVirtualAddress());
-    mCommandList->SetPipelineState(mPSOs["voxelizer"].Get());
-    DrawRenderItems(mCommandList.Get(), mScene->getObjectInfoLayer()[(int)_layer]);
-
-    //mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mMeshVoxelizer->getResourcePtr(),
-    //    D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS ));
+    DrawRenderItems(mCommandList.Get(), _layer);
 }
 
 void App::DrawScene2GBuffers() {
 
-    mCommandList->SetGraphicsRootSignature(mRootSignatures["MainPass"].Get());
-    //mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::SHADOWMAP_TEX_TABLE, mShadowMap->getGPUHandle4SRV());
-    //mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::G_BUFFER, mDeferredRenderer->getGBuffer(GBUFFER_TYPE::POSITION)->getGPUHandle4SRV());// starting GPU handle location for all gbuffers
-    //mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::VOXEL, mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::ALBEDO)->getGPUHandle4SRV());
-    //mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::RADIANCEMIP, mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getGPUHandle4SRV(0));
+    PIX_EVENT_BLOCK( "DrawScene2GBuffers()" );
     UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
+    auto dsv = DepthStencilView();
+    auto passCB = mCurrFrameResource->PassCB->Resource();
+    float clearValue[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    D3D12_CPU_DESCRIPTOR_HANDLE CPUhandleArray[ ( int )GBUFFER_TYPE::COUNT ]{};
+
+    mCommandList->SetGraphicsRootSignature(mRootSignatures["MainPass"].Get());
     mCommandList->RSSetViewports(1, &mDeferredRenderer->Viewport());
     mCommandList->RSSetScissorRects(1, &mDeferredRenderer->ScissorRect());
-    D3D12_CPU_DESCRIPTOR_HANDLE CPUhandleArray[(int)GBUFFER_TYPE::COUNT];
-    for (auto& gbuffer : mDeferredRenderer->getGbuffersMap()) {
-      auto barrier = CD3DX12_RESOURCE_BARRIER::Transition( gbuffer.second->getResourcePtr(),
-                                                           D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET );
-        mCommandList->ResourceBarrier(1, &barrier);
-        float clearValue[] = { 0.0f, 0.0f, 0.0f, 1.0f };
-        mCommandList->ClearRenderTargetView(gbuffer.second->getCPUHandle4RTV(), clearValue, 0, nullptr);
-        CPUhandleArray[(int)gbuffer.second->getType()] = gbuffer.second->getCPUHandle4RTV();
-    }
-    mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
     {
-      auto dsv = DepthStencilView();
+      PIX_EVENT_BLOCK( "Prepare color buffers" );
+      for( auto& gbuffer : mDeferredRenderer->getGbuffersMap() )
+      {
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition( gbuffer.second->getResourcePtr(),
+                                                             D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET );
+        mCommandList->ResourceBarrier( 1, &barrier );
+        mCommandList->ClearRenderTargetView( gbuffer.second->getCPUHandle4RTV(), clearValue, 0, nullptr );
+        CPUhandleArray[ ( int )gbuffer.second->getType() ] = gbuffer.second->getCPUHandle4RTV();
+      }
+    }
+
+
+    {
+      PIX_EVENT_BLOCK( "Prepare depth buffer" );
+      mCommandList->ClearDepthStencilView( dsv, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr );
       mCommandList->OMSetRenderTargets( static_cast< UINT >( GBUFFER_TYPE::COUNT ), &CPUhandleArray[ 0 ], false, &dsv );
     }
-    auto passCB = mCurrFrameResource->PassCB->Resource();
+
     mCommandList->SetGraphicsRootConstantBufferView(d3dUtil::MAIN_PASS_UNIFORM::MAINPASS_CBV, passCB->GetGPUVirtualAddress());
     mCommandList->SetPipelineState(mPSOs["deferred"].Get());
-    DrawRenderItems(mCommandList.Get(), mScene->getObjectInfoLayer()[(int)RenderLayer::Default]);
-    for (auto& gbuffer : mDeferredRenderer->getGbuffersMap()) {
-      auto barrier = CD3DX12_RESOURCE_BARRIER::Transition( gbuffer.second->getResourcePtr(),
-                                                           D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ );
-        mCommandList->ResourceBarrier(1, &barrier);
+    DrawRenderItems(mCommandList.Get(), RenderLayer::Default);
+
+    {
+      PIX_EVENT_BLOCK( "transition color buffers to generic_read" );
+      for( auto& gbuffer : mDeferredRenderer->getGbuffersMap() )
+      {
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition( gbuffer.second->getResourcePtr(),
+                                                             D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ );
+        mCommandList->ResourceBarrier( 1, &barrier );
+      }
     }
 }
 
 void App::DrawScene2ShadowMap() {
 
+    PIX_EVENT_BLOCK( "DrawScene2ShadowMap()" );
     mCommandList->RSSetViewports(1, &mShadowMap->Viewport());
     mCommandList->RSSetScissorRects(1, &mShadowMap->ScissorRect());
     mCommandList->SetGraphicsRootSignature(mRootSignatures["MainPass"].Get());
@@ -1410,7 +1464,7 @@ void App::DrawScene2ShadowMap() {
     D3D12_GPU_VIRTUAL_ADDRESS passCBAddress = passCB->GetGPUVirtualAddress() + 1 * passCBByteSize;
     mCommandList->SetGraphicsRootConstantBufferView(d3dUtil::MAIN_PASS_UNIFORM::MAINPASS_CBV, passCBAddress);
     mCommandList->SetPipelineState(mPSOs["shadow_opaque"].Get());
-    DrawRenderItems(mCommandList.Get(), mScene->getObjectInfoLayer()[(int)RenderLayer::Default]);
+    DrawRenderItems( mCommandList.Get(), RenderLayer::Default );
     // Change back to GENERIC_READ so we can read the texture in a shader.
     {
       auto barrier = CD3DX12_RESOURCE_BARRIER::Transition( mShadowMap->getResourcePtr(),
@@ -1419,8 +1473,24 @@ void App::DrawScene2ShadowMap() {
     }
 }
 
-void App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<ObjectInfo*>& objInfos)
+void App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, RenderLayer layer )
 {
+    std::string str = "DrawRenderItems(";
+    switch( layer )
+    {
+      case RenderLayer::Default: str += "Default"; break;
+      case RenderLayer::Debug: str += "Debug"; break;
+      case RenderLayer::Gbuffer: str += "Gbuffer"; break;
+      case RenderLayer::Sky: str += "Sky"; break;
+      case RenderLayer::Dynamic: str += "Dynamic"; break;
+      case RenderLayer::Static: str += "Static"; break;
+      default: str += "?";
+    }
+
+    str += ")";
+    PIX_EVENT_BLOCK( str.c_str() );
+
+    const std::vector<ObjectInfo*>& objInfos = mScene->getObjectInfoLayer()[ ( int )layer ];
 
     // For each obj ...
     for (size_t i = 0; i < objInfos.size(); ++i)

@@ -36,6 +36,7 @@ private:
     virtual void OnResize()override;
     virtual void Update(const Timer& gt)override;
     virtual void Draw(const Timer& gt)override;
+    void RecordDrawCommands();
     virtual void OnDestroy()override;
 
     // input callbacks 
@@ -80,7 +81,7 @@ private:
         );
 
     void BuildFrameResources();
-    void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<ObjectInfo*>& objInfos);
+    void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, RenderLayer);
 
 
     //render passes draw command

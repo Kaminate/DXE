@@ -51,3 +51,14 @@ target_include_directories( Demo
 
 target_link_libraries(Demo PRIVATE dxgi.lib assimp)
 
+
+# Download pix runtime library from nuget
+include( ${CMAKE_SOURCE_DIR}/cmake/pix.cmake )
+add_pix_target()
+target_link_libraries( Demo PRIVATE PIX )
+add_custom_command( TARGET Demo
+                    PRE_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            ${PIX_DLL_PATH}
+                            $<TARGET_FILE_DIR:Demo> )
+target_compile_definitions( Demo PRIVATE PIX_AVAILABLE )
