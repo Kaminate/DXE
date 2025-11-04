@@ -5,6 +5,9 @@
 #include "imgui_impl_dx12.h"
 
 #if PIX_AVAILABLE
+#pragma warning(disable:6011)
+#pragma warning(disable:6101)
+
 #include <WinPixEventRuntime/pix3.h>
 struct PixEventBlock
 {
@@ -28,10 +31,10 @@ struct ExampleDescriptorHeapAllocator
 {
   ID3D12DescriptorHeap* Heap = nullptr;
   D3D12_DESCRIPTOR_HEAP_TYPE  HeapType = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
-  D3D12_CPU_DESCRIPTOR_HANDLE HeapStartCpu;
-  D3D12_GPU_DESCRIPTOR_HANDLE HeapStartGpu;
-  UINT                        HeapHandleIncrement;
-  ImVector<int>               FreeIndices;
+  D3D12_CPU_DESCRIPTOR_HANDLE HeapStartCpu{};
+  D3D12_GPU_DESCRIPTOR_HANDLE HeapStartGpu{};
+  UINT                        HeapHandleIncrement{};
+  ImVector<int>               FreeIndices{};
 
   void Create( ID3D12Device* device, ID3D12DescriptorHeap* heap )
   {
@@ -1256,55 +1259,32 @@ void App::BuildFrameResources() {
 }
 
 void App::DrawScene() {
+    auto cbb = CurrentBackBuffer();
+    auto cbbv = CurrentBackBufferView();
+    auto passCB = mCurrFrameResource->PassCB->Resource();
+    auto present2RenderTgt = CD3DX12_RESOURCE_BARRIER::Transition( cbb,
+                                                                   D3D12_RESOURCE_STATE_PRESENT,
+                                                                   D3D12_RESOURCE_STATE_RENDER_TARGET );
+    auto renderTgt2Present = CD3DX12_RESOURCE_BARRIER::Transition( cbb,
+                                                                   D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                                                   D3D12_RESOURCE_STATE_PRESENT );
     PIX_EVENT_BLOCK( "DrawScene()" );
     mCommandList->RSSetViewports(1, &mScreenViewport);
     mCommandList->RSSetScissorRects(1, &mScissorRect);
-
-    // Indicate a state transition on the resource usage. 
-    {
-      auto transition = CD3DX12_RESOURCE_BARRIER::Transition( CurrentBackBuffer(),
-                                                              D3D12_RESOURCE_STATE_PRESENT,
-                                                              D3D12_RESOURCE_STATE_RENDER_TARGET );
-      mCommandList->ResourceBarrier( 1, &transition );
-    }
-
-    //mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::RADIANCE)->getResourcePtr(),
-    //    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ));
-    //mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::ALBEDO)->getResourcePtr(),
-    //    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ));
-    //mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getResourcePtr(),
-    //    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_GENERIC_READ));
-
-    // Clear the back buffer and depth buffer.
+    mCommandList->ResourceBarrier( 1, &present2RenderTgt );
     mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
-    auto cbbv = CurrentBackBufferView();
     mCommandList->OMSetRenderTargets(1, &cbbv, true, nullptr);
     mCommandList->SetGraphicsRootSignature(mRootSignatures["MainPass"].Get());
     mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::SHADOWMAP_TEX_TABLE, mShadowMap->getGPUHandle4SRV());
     mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::G_BUFFER, mDeferredRenderer->getGBuffer(GBUFFER_TYPE::POSITION)->getGPUHandle4SRV());// starting GPU handle location for all gbuffers
     mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::VOXEL, mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::ALBEDO)->getGPUHandle4SRV());
     mCommandList->SetGraphicsRootDescriptorTable(d3dUtil::MAIN_PASS_UNIFORM::RADIANCEMIP, mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getGPUHandle4SRV());
-    auto passCB = mCurrFrameResource->PassCB->Resource();
     mCommandList->SetGraphicsRootConstantBufferView(d3dUtil::MAIN_PASS_UNIFORM::MAINPASS_CBV, passCB->GetGPUVirtualAddress());
     mCommandList->SetPipelineState(mPSOs["deferredPost"].Get());
     DrawRenderItems(mCommandList.Get(), RenderLayer::Gbuffer);
     mCommandList->SetPipelineState(mPSOs["debug"].Get());
     DrawRenderItems(mCommandList.Get(), RenderLayer::Debug);
-    // Indicate a state transition on the resource usage.
-
-    //mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::RADIANCE)->getResourcePtr(),
-    //    D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS ));
-    //mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mMeshVoxelizer->getVolumeTexture(VOLUME_TEXTURE_TYPE::ALBEDO)->getResourcePtr(),
-    //    D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
-    //mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mMeshVoxelizer->getRadianceMipMapedVolumeTexture()->getResourcePtr(),
-    //    D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_UNORDERED_ACCESS ));
-
-    {
-      auto transition = CD3DX12_RESOURCE_BARRIER::Transition( CurrentBackBuffer(),
-                                                              D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                                              D3D12_RESOURCE_STATE_PRESENT );
-      mCommandList->ResourceBarrier( 1, &transition );
-    }
+    mCommandList->ResourceBarrier( 1, &renderTgt2Present );
 }
 
 void App::InjectRadiance() {
@@ -1323,7 +1303,6 @@ void App::InjectRadiance() {
 
 void App::FillMip() {
     PIX_EVENT_BLOCK( "FillMip()" );
-    UINT mipPow = 2;
     int dispatchX = mMeshVoxelizer->getDimensionX()  / 8 ;
     int dispatchY = mMeshVoxelizer->getDimensionY()  / 8 ;
     int dispatchZ = mMeshVoxelizer->getDimensionZ()  / 8 ;
@@ -1496,6 +1475,8 @@ void App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, RenderLayer layer 
     for (size_t i = 0; i < objInfos.size(); ++i)
     {
         auto rObject = objInfos[i];
+        if( !rObject )
+          continue;
 
         cmdList->IASetVertexBuffers(0, 1, &rObject->Model->getVertexBufferView());
         cmdList->IASetIndexBuffer(&rObject->Model->getIndexBufferView());

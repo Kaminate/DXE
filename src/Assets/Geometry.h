@@ -11,7 +11,7 @@ class Geometry {
 public:
     struct Vertex
     {
-        Vertex() {}
+        Vertex() = default;
         Vertex(
             const DirectX::XMFLOAT3& p,
             const DirectX::XMFLOAT3& n,
@@ -31,10 +31,10 @@ public:
             TangentU(tx, ty, tz),
             TexC(u, v) {}
 
-        DirectX::XMFLOAT3 Position;
-        DirectX::XMFLOAT3 Normal;
-        DirectX::XMFLOAT3 TangentU;
-        DirectX::XMFLOAT2 TexC;
+        DirectX::XMFLOAT3 Position{};
+        DirectX::XMFLOAT3 Normal{};
+        DirectX::XMFLOAT3 TangentU{};
+        DirectX::XMFLOAT2 TexC{};
     };
 
     struct MeshData

@@ -55,22 +55,22 @@ private:
 
 protected:
 
-	ID3D12Device* device;
-	UINT mX, mY, mZ;
-	UINT mNumDescriptors;
+	ID3D12Device* device{};
+	UINT mX{}, mY{}, mZ{};
+	UINT mNumDescriptors{};
 
 
-	D3D12_CPU_DESCRIPTOR_HANDLE mhCPUuav;
-	D3D12_GPU_DESCRIPTOR_HANDLE mhGPUuav;
-	D3D12_CPU_DESCRIPTOR_HANDLE mhCPUsrv;
-	D3D12_GPU_DESCRIPTOR_HANDLE mhGPUsrv;
+	D3D12_CPU_DESCRIPTOR_HANDLE mhCPUuav{};
+	D3D12_GPU_DESCRIPTOR_HANDLE mhGPUuav{};
+	D3D12_CPU_DESCRIPTOR_HANDLE mhCPUsrv{};
+	D3D12_GPU_DESCRIPTOR_HANDLE mhGPUsrv{};
 
 	DXGI_FORMAT mFormat = DXGI_FORMAT_R8G8B8A8_TYPELESS;
 	DXGI_FORMAT mSRVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 	DXGI_FORMAT mUAVFormat = DXGI_FORMAT_R32_UINT;
 	Microsoft::WRL::ComPtr<ID3D12Resource> m3DTexture;
-	D3D12_VIEWPORT mViewPort;
-	D3D12_RECT mScissorRect;
+	D3D12_VIEWPORT mViewPort{};
+	D3D12_RECT mScissorRect{};
 };
 
 class RadianceMipMapedVolumeTexture {
@@ -106,17 +106,17 @@ private:
 
 private:
 
-	ID3D12Device* device;
-	UINT mX, mY, mZ;
-	UINT mNumDescriptors;
+	ID3D12Device* device{};
+	UINT mX{}, mY{}, mZ{};
+	UINT mNumDescriptors{};
 
 	std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> mhCPUuavs;
 	std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> mhGPUuavs;
-	D3D12_CPU_DESCRIPTOR_HANDLE mhCPUsrv;
-	D3D12_GPU_DESCRIPTOR_HANDLE mhGPUsrv;
+	D3D12_CPU_DESCRIPTOR_HANDLE mhCPUsrv{};
+	D3D12_GPU_DESCRIPTOR_HANDLE mhGPUsrv{};
 
 
-	UINT mNumMipLevels;
+	UINT mNumMipLevels{};
 	DXGI_FORMAT mFormat = DXGI_FORMAT_R8G8B8A8_TYPELESS;
 	DXGI_FORMAT mSRVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 	DXGI_FORMAT mUAVFormat = DXGI_FORMAT_R32_UINT;

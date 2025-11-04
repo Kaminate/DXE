@@ -307,14 +307,14 @@ const D3D12_RECT& MeshVoxelizer::ScissorRect()const {
 void MeshVoxelizer::PopulateUniformData() {
 	float sceneRadius = 400.0f;
 	DirectX::XMFLOAT3 eyePos = DirectX::XMFLOAT3(0.0f, 0.0, -sceneRadius);
-	DirectX::XMFLOAT3 tartPos = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
+	DirectX::XMFLOAT3 tgtPos = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
 	DirectX::XMFLOAT3 up = DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f);
-
-
-	DirectX::XMMATRIX VoxelView = DirectX::XMMatrixLookAtLH(DirectX::XMLoadFloat3(&eyePos), DirectX::XMLoadFloat3(&tartPos),
+	DirectX::XMMATRIX VoxelView = DirectX::XMMatrixLookAtLH(
+		DirectX::XMLoadFloat3(&eyePos),
+		DirectX::XMLoadFloat3(&tgtPos),
 		DirectX::XMLoadFloat3(&up));
-	DirectX::XMMATRIX VoxelProj = DirectX::XMMatrixOrthographicLH(sceneRadius, sceneRadius, 0.0f, 1000.0f);
-
+	DirectX::XMMATRIX VoxelProj = DirectX::XMMatrixOrthographicLH(
+		sceneRadius, sceneRadius, 0.0f, 1000.0f);
 	DirectX::XMStoreFloat4x4(&mData.mVoxelView, VoxelView);
 	DirectX::XMStoreFloat4x4(&mData.mVoxelProj, VoxelProj);
 }

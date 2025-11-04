@@ -1,6 +1,3 @@
-
-
-
 cbuffer cbRadiance : register(b0)
 {
     float3 gLightDir;
@@ -22,8 +19,6 @@ uint convVec4ToRGBA8(float4 val)
     return (uint (val.w) & 0x000000FF) << 24U | (uint(val.z) & 0x000000FF) << 16U | (uint(val.y) & 0x000000FF) << 8U | (uint(val.x) & 0x000000FF);
 }
 
-
-
 RWTexture3D<uint> gVoxelizerAlbedo : register(u0);
 RWTexture3D<uint> gVoxelizerNormal : register(u1);
 RWTexture3D<uint> gVoxelizerEmissive : register(u2);
@@ -31,22 +26,6 @@ RWTexture3D<uint> gVoxelizerRadiance : register(u3);
 RWTexture3D<uint> gVoxelizerFlag : register(u4);
 
 Texture2D    gShadowMap : register(t0);
-
-
-float4 getAvgCol(uint3 texIndex) {
-    float4 c = float4(convRGBA8ToVec4(gVoxelizerAlbedo[texIndex]).xyz / 255.0, 1.0f);
-    float4 t = float4(convRGBA8ToVec4(gVoxelizerAlbedo[texIndex + uint3(0,1,0)]).xyz / 255.0, 1.0f);
-    float4 b = float4(convRGBA8ToVec4(gVoxelizerAlbedo[texIndex + uint3(0, -1, 0)]).xyz / 255.0, 1.0f);
-    float4 l = float4(convRGBA8ToVec4(gVoxelizerAlbedo[texIndex + uint3(-1, 0, 0)]).xyz / 255.0, 1.0f);
-    float4 r = float4(convRGBA8ToVec4(gVoxelizerAlbedo[texIndex + uint3(1, 0, 0)]).xyz / 255.0, 1.0f);
-    float4 o = float4(convRGBA8ToVec4(gVoxelizerAlbedo[texIndex + uint3(0, 0, 1)]).xyz / 255.0, 1.0f);
-    float4 i = float4(convRGBA8ToVec4(gVoxelizerAlbedo[texIndex + uint3(0, 0, -1)]).xyz / 255.0, 1.0f);
-    return (c + t + b + l + r + o + i) / 7;
-}
-
-float3 getAvgNorcol(uint3 idx) {
-
-}
 
 [numthreads(16, 16, 1)]
 void Radiance( uint3 DTid : SV_DispatchThreadID )
@@ -69,12 +48,12 @@ void Radiance( uint3 DTid : SV_DispatchThreadID )
     float4 volumeSpacePos = mul(screenSpacePos, gLight2World);
     volumeSpacePos.xyz /= (voxelScale);
 
-    uint3 texIndex = uint3(((volumeSpacePos.x * 0.5) + 0.5f) * volTexDimensions.x  ,
-        ((volumeSpacePos.y * 0.5) + 0.5f) * volTexDimensions.y  , // not sre why, but need to offset y value to match accurate result, weird
+    uint3 texIndex = uint3(
+        ((volumeSpacePos.x * 0.5) + 0.5f) * volTexDimensions.x,
+        ((volumeSpacePos.y * 0.5) + 0.5f) * volTexDimensions.y,
         ((volumeSpacePos.z * 0.5) + 0.5f) * volTexDimensions.z );
 
     float4 col = float4(convRGBA8ToVec4(gVoxelizerAlbedo[texIndex]).xyz / 255.0, 0.0f);
-    //float4 col = getAvgCol(texIndex);
 
     float3 nor = float3(convRGBA8ToVec4(gVoxelizerNormal[texIndex]).xyz / 255.0);
     nor = 2.0 * (nor  - float3(0.5, 0.5, 0.5));
@@ -82,25 +61,11 @@ void Radiance( uint3 DTid : SV_DispatchThreadID )
 
     col.xyz *= (abs(dot(nor, -normalize(gLightDir))) + 0.0) * gLightCol * 1.0;
 
-    //col.xyz = float3(1.0, 1.0, 1.0);
-
-
-
-    //imageAtomicRGBA8Avg(gVoxelizerRadiance, texIndex, col);
-
     int oldRadiance = gVoxelizerRadiance[int3(texIndex)]; 
     float4 oldRadianceCol = convRGBA8ToVec4(oldRadiance) / 255.0;
-    //col += oldRadianceCol; // preserve the alpha
-    //if radiance is already filled - meaning we already have emissive color written to it in voxlizer.hlsl, we leave it alone
-
-    //onlyvoxel lights
-    //if (all(oldRadianceCol.xyz > 0)) {
-    //    col.xyz = oldRadianceCol.xyz;
-    //}
 
     col.a = oldRadianceCol.a;
     if (all(oldRadianceCol.xyz > 0.0)) return; // if we already have value in from voxlizer pass, meaning emissive radiance already injected
-    //col.xyz += oldRadianceCol.xyz;
     col = clamp(col , float4(0.0, 0.0, 0.0, 0.0), float4(1, 1, 1, 1));
     col *= 255.0f;
 
